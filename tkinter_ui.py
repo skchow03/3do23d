@@ -6,6 +6,7 @@ import contextlib
 import io
 import queue
 import threading
+import traceback
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -205,7 +206,9 @@ class ConverterApp(tk.Tk):
                     generate_missing_planes=options["generate_missing_planes"],
                 )
         except Exception as exc:  # noqa: BLE001 - surface converter errors in the UI.
-            self.output_queue.put(f"\nConversion failed: {exc}\n")
+            self.output_queue.put(f"\nConversion failed while converting {input_file}: {exc}\n")
+            self.output_queue.put("Detailed error location:\n")
+            self.output_queue.put(traceback.format_exc())
             self.output_queue.put("__STATUS__:ERROR")
         else:
             self.output_queue.put("\nConversion finished successfully.\n")
@@ -234,6 +237,8 @@ class ConverterApp(tk.Tk):
                 except Exception as exc:  # noqa: BLE001 - keep batch conversion running.
                     failures += 1
                     print(f"Conversion failed for {input_file}: {exc}")
+                    print("Detailed error location:")
+                    print(traceback.format_exc(), end="")
         if failures:
             self.output_queue.put(f"\nFolder conversion finished with {failures} failure(s).\n")
             self.output_queue.put("__STATUS__:ERROR")

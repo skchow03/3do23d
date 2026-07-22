@@ -1,5 +1,6 @@
 import _3do_v3_icr2 as c
 import argparse
+import traceback
 
 # # EXAMPLES:
 # #c.convert_3do23d('elkhart.3do', combine_data_with_list=False, sort_vertices=True)
@@ -21,14 +22,20 @@ def main():
     args = parser.parse_args()
 
     # Call the function with the parsed arguments
-    c.convert_3do23d(
-        filename=args.input_file,
-        output_file=args.output_file,
-        tolerance=args.tolerance,
-        sort_vertices=args.sort_vertices,
-        combine_data_with_list=args.combine_data_with_list,
-        generate_missing_planes=args.generate_missing_planes
-    )
+    try:
+        c.convert_3do23d(
+            filename=args.input_file,
+            output_file=args.output_file,
+            tolerance=args.tolerance,
+            sort_vertices=args.sort_vertices,
+            combine_data_with_list=args.combine_data_with_list,
+            generate_missing_planes=args.generate_missing_planes
+        )
+    except Exception as exc:  # noqa: BLE001 - expose detailed conversion failures to CLI users.
+        print(f"Conversion failed while converting {args.input_file}: {exc}")
+        print("Detailed error location:")
+        print(traceback.format_exc(), end="")
+        raise SystemExit(1) from exc
 
 if __name__ == "__main__":
     main()
