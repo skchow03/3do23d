@@ -92,8 +92,10 @@ class ConverterApp(tk.Tk):
         self.detailed_progress = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Ready")
         self.current_step = tk.StringVar(value="Idle")
+        self._last_default_output_file = ""
 
         self._build_ui()
+        self.input_file.trace_add("write", self._sync_output_file_default)
         self.after(100, self._drain_output_queue)
         self._queue_poll_interval_ms = 100
         self._queue_busy_poll_interval_ms = 10
@@ -134,8 +136,20 @@ class ConverterApp(tk.Tk):
         self.output_file_button = ttk.Button(main, text="Save as...", command=self._browse_output)
         self.output_file_button.grid(row=3, column=2, pady=(0, 8))
 
-        ttk.Label(main, text="Tolerance").grid(row=4, column=0, sticky="w", pady=(0, 8))
-        ttk.Entry(main, textvariable=self.tolerance, width=12).grid(row=4, column=1, sticky="w", padx=8, pady=(0, 8))
+        self.tolerance_label = ttk.Label(main, text="Tolerance")
+        self.tolerance_label.grid(row=4, column=0, sticky="w", pady=(0, 8))
+        self._create_tooltip(
+            self.tolerance_label,
+            "Maximum allowed deviation when matching BSP/FACE plane coefficients to polygons. "
+            "Higher values can match less exact geometry; lower values require closer matches.",
+        )
+        self.tolerance_entry = ttk.Entry(main, textvariable=self.tolerance, width=12)
+        self.tolerance_entry.grid(row=4, column=1, sticky="w", padx=8, pady=(0, 8))
+        self._create_tooltip(
+            self.tolerance_entry,
+            "Maximum allowed deviation when matching BSP/FACE plane coefficients to polygons. "
+            "Higher values can match less exact geometry; lower values require closer matches.",
+        )
 
         options = ttk.LabelFrame(main, text="Options", padding=8)
         options.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 12))
@@ -161,6 +175,49 @@ class ConverterApp(tk.Tk):
         self.log.grid(row=8, column=0, columnspan=3, sticky="nsew")
         self._update_mode()
 
+    def _sync_output_file_default(self, *_args: object) -> None:
+        input_file = self.input_file.get().strip()
+        default_output_file = str(Path(input_file).with_suffix(".3d")) if input_file else ""
+        current_output_file = self.output_file.get().strip()
+
+        if not current_output_file or current_output_file == self._last_default_output_file:
+            self.output_file.set(default_output_file)
+
+        self._last_default_output_file = default_output_file
+
+    def _create_tooltip(self, widget: tk.Widget, text: str) -> None:
+        tooltip: tk.Toplevel | None = None
+
+        def show_tooltip(_event: tk.Event[tk.Widget]) -> None:
+            nonlocal tooltip
+            if tooltip is not None:
+                return
+            tooltip = tk.Toplevel(widget)
+            tooltip.wm_overrideredirect(True)
+            x_position = widget.winfo_rootx() + 20
+            y_position = widget.winfo_rooty() + widget.winfo_height() + 4
+            tooltip.wm_geometry(f"+{x_position}+{y_position}")
+            label = ttk.Label(
+                tooltip,
+                text=text,
+                justify="left",
+                wraplength=320,
+                padding=6,
+                relief="solid",
+                borderwidth=1,
+            )
+            label.pack()
+
+        def hide_tooltip(_event: tk.Event[tk.Widget]) -> None:
+            nonlocal tooltip
+            if tooltip is not None:
+                tooltip.destroy()
+                tooltip = None
+
+        widget.bind("<Enter>", show_tooltip, add="+")
+        widget.bind("<Leave>", hide_tooltip, add="+")
+        widget.bind("<ButtonPress>", hide_tooltip, add="+")
+
     def _browse_input(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select ICR2 3DO file",
@@ -168,8 +225,6 @@ class ConverterApp(tk.Tk):
         )
         if filename:
             self.input_file.set(filename)
-            if not self.output_file.get():
-                self.output_file.set(str(Path(filename).with_suffix(".3d")))
 
     def _browse_folder(self) -> None:
         foldername = filedialog.askdirectory(title="Select folder containing ICR2 3DO files")
