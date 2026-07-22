@@ -332,17 +332,42 @@ class Res:
         self.flav = 13
 
     def output_text(self):
-        cmd = 'SWITCH DISTANCE: _{} > (({} ? _{}), ({} ? _{}), ({} ? _{}), ({} ? _{}))'.format(
-            self.res1,
-            self.res2,
-            self.res3,
-            self.res4,
-            self.res5,
-            self.res6,
-            self.res7,
-            self.res8,
-            self.res9
-        )
+        if self.res2 == 0:
+            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{})}}'.format(
+                self.res1,
+                self.res2,
+                self.res3,
+            )
+        elif self.res4 == 0:
+            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{}), ({} ? _{})}}'.format(
+                self.res1,
+                self.res2,
+                self.res3,
+                self.res4,
+                self.res5,
+            )
+        elif self.res6 == 0:
+            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{}), ({} ? _{}), ({} ? _{})}}'.format(
+                self.res1,
+                self.res2,
+                self.res3,
+                self.res4,
+                self.res5,
+                self.res6,
+                self.res7,
+            )
+        elif self.res8 == 0:
+            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{}), ({} ? _{}), ({} ? _{}), ({} ? _{})}}'.format(
+                self.res1,
+                self.res2,
+                self.res3,
+                self.res4,
+                self.res5,
+                self.res6,
+                self.res7,
+                self.res8,
+                self.res9
+            )
         return cmd
 
 class PMP:
