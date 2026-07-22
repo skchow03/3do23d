@@ -31,6 +31,15 @@ python tkinter_ui.py
 
 The UI exposes the same converter options as the command line, shows converter output in a log panel, and keeps the window responsive while conversion runs. Use the conversion mode selector to convert either one selected `.3DO` file or every `.3DO` file in a selected folder. Folder conversions write each `.3D` file next to its source file with the same base name.
 
+## 3DO viewer
+Run the OpenGL viewer with an optional starting `.3DO` file:
+
+```
+python icr2_3do_viewer.py [path/to/object.3do]
+```
+
+The viewer includes a **File** menu. Use **File > Open 3DO...** to load or replace the displayed model, and **File > Open sunny.pcx...** to load a 256-color PCX palette for polygon color indices.
+
 ## Example
 ```
 python 3do23d.py example.3do --output_file example.3d --tolerance 1 --sort_vertices --combine_data_with_list --generate_missing_planes
