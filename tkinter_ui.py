@@ -6,6 +6,7 @@ import contextlib
 import io
 import queue
 import threading
+import time
 import traceback
 import tkinter as tk
 from dataclasses import dataclass, field
@@ -93,6 +94,10 @@ class ConverterApp(tk.Tk):
 
         self._build_ui()
         self.after(100, self._drain_output_queue)
+        self._queue_poll_interval_ms = 100
+        self._queue_busy_poll_interval_ms = 10
+        self._queue_drain_time_budget_s = 0.03
+        self._queue_drain_message_budget = 100
 
     def _build_ui(self) -> None:
         main = ttk.Frame(self, padding=16)
@@ -334,38 +339,54 @@ class ConverterApp(tk.Tk):
             widget.configure(state=folder_state)
 
     def _drain_output_queue(self) -> None:
-        try:
-            while True:
+        processed_messages = 0
+        drain_started_at = time.monotonic()
+        queue_has_more_work = False
+
+        while processed_messages < self._queue_drain_message_budget:
+            if time.monotonic() - drain_started_at >= self._queue_drain_time_budget_s:
+                queue_has_more_work = not self.output_queue.empty()
+                break
+
+            try:
                 text = self.output_queue.get_nowait()
-                if text == "__STATUS__:DONE":
-                    self.status.set("Done")
-                    self.current_step.set("Conversion complete")
-                    self.convert_button.configure(state="normal")
-                    messagebox.showinfo("Conversion complete", "The 3DO file was converted successfully.")
-                elif text == "__STATUS__:DONE_FOLDER":
-                    self.status.set("Done")
-                    self.current_step.set("Folder conversion complete")
-                    self.convert_button.configure(state="normal")
-                elif text == "__STATUS__:ERROR_FOLDER":
-                    self.status.set("Error")
-                    self.current_step.set("Folder conversion finished with errors")
-                    self.convert_button.configure(state="normal")
-                elif isinstance(text, str) and text.startswith("__PROGRESS__:"):
-                    progress_text = text.removeprefix("__PROGRESS__:")
-                    self.current_step.set(progress_text)
-                    self._append_log(f"[progress] {progress_text}\n")
-                elif text == "__STATUS__:ERROR":
-                    self.status.set("Error")
-                    self.current_step.set("Conversion failed; see log for detailed error location")
-                    self.convert_button.configure(state="normal")
-                    messagebox.showerror("Conversion failed", "See the log for details.")
-                elif isinstance(text, FolderConversionSummary):
-                    self._show_folder_summary(text)
-                else:
-                    self._append_log(text)
-        except queue.Empty:
-            pass
-        self.after(100, self._drain_output_queue)
+            except queue.Empty:
+                break
+
+            processed_messages += 1
+            if text == "__STATUS__:DONE":
+                self.status.set("Done")
+                self.current_step.set("Conversion complete")
+                self.convert_button.configure(state="normal")
+                messagebox.showinfo("Conversion complete", "The 3DO file was converted successfully.")
+            elif text == "__STATUS__:DONE_FOLDER":
+                self.status.set("Done")
+                self.current_step.set("Folder conversion complete")
+                self.convert_button.configure(state="normal")
+            elif text == "__STATUS__:ERROR_FOLDER":
+                self.status.set("Error")
+                self.current_step.set("Folder conversion finished with errors")
+                self.convert_button.configure(state="normal")
+            elif isinstance(text, str) and text.startswith("__PROGRESS__:"):
+                progress_text = text.removeprefix("__PROGRESS__:")
+                self.current_step.set(progress_text)
+                self._append_log(f"[progress] {progress_text}\n")
+                self.update_idletasks()
+            elif text == "__STATUS__:ERROR":
+                self.status.set("Error")
+                self.current_step.set("Conversion failed; see log for detailed error location")
+                self.convert_button.configure(state="normal")
+                messagebox.showerror("Conversion failed", "See the log for details.")
+            elif isinstance(text, FolderConversionSummary):
+                self._show_folder_summary(text)
+            else:
+                self._append_log(text)
+
+        if processed_messages >= self._queue_drain_message_budget:
+            queue_has_more_work = not self.output_queue.empty()
+
+        next_poll_ms = self._queue_busy_poll_interval_ms if queue_has_more_work else self._queue_poll_interval_ms
+        self.after(next_poll_ms, self._drain_output_queue)
 
 
     def _show_folder_summary(self, summary: FolderConversionSummary) -> None:
