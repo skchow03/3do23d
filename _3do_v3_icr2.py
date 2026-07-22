@@ -7,7 +7,7 @@ def print_list(list):
     new_list = [x.decode('ascii').rstrip('\x00') for x in list]
     print (new_list)
 
-def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False):
+def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False, calculate_missing_bsp_planes=False):
 
     if not output_file:
         output_file = filename[:len(filename)-4] + '.3d'
