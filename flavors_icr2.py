@@ -5,7 +5,7 @@ def papy_angle_to_deg(angle):
 
 
 def format_plane_points(points):
-    return ', '.join('[{}, {}, {}]'.format(x, y, z) for x, y, z in points)
+    return ', '.join('[<{}, {}, {}>]'.format(x, y, z) for x, y, z in points)
 
 
 class Vertex:
