@@ -22,6 +22,15 @@ python 3do23d.py <input 3DO file> [options]
 - `--combine_data_with_list`: In N3 .3D files, the DATA with DLONGs is within the LIST lines, whereas in ICR2 .3DO files, DATA is a separate statement. This option makes the file conform to N3 format.
 - `--generate_missing_planes`: If a FACE or BSP plane cannot be matched to existing polygon vertices, generate three inline coordinate vertices from that FACE/BSP plane equation and write them directly inside the FACE/BSP plane reference. If the plane values cannot produce integer vertices, the program prints a message saying so.
 
+## Graphical interface
+Run the Tkinter UI if you prefer selecting files and options from a simple desktop window:
+
+```
+python tkinter_ui.py
+```
+
+The UI exposes the same converter options as the command line, shows converter output in a log panel, and keeps the window responsive while conversion runs.
+
 ## Example
 ```
 python 3do23d.py example.3do --output_file example.3d --tolerance 1 --sort_vertices --combine_data_with_list --generate_missing_planes
