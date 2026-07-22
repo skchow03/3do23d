@@ -7,7 +7,7 @@ def print_list(list):
     new_list = [x.decode('ascii').rstrip('\x00') for x in list]
     print (new_list)
 
-def convert_3do23d(filename, output_file=None, tolerance=1, sort_vertices=False, combine_data_with_list=False):
+def convert_3do23d(filename, output_file=None, tolerance=1, sort_vertices=False, combine_data_with_list=False, calculate_missing_bsp_planes=False):
 
     if not output_file:
         output_file = filename[:len(filename)-4] + '.3d'
@@ -307,7 +307,9 @@ def convert_3do23d(filename, output_file=None, tolerance=1, sort_vertices=False,
     exact_matches = 0
     approx_matches = 0
     diffs = []
-    for i in body_dict:
+    synthetic_plane_matches = 0
+    next_synthetic_pointer = max(body_dict.keys(), default=0) + 1
+    for i in list(body_dict):
 
         if 5 <= body_dict[i].flav <= 10:    # Check for all FACE and BSP functions
             success_flag = False
@@ -344,9 +346,26 @@ def convert_3do23d(filename, output_file=None, tolerance=1, sort_vertices=False,
                         success_flag = True
                         diffs.append(diff)
                         break
+            if not success_flag and calculate_missing_bsp_planes:
+                calculated_points = calculate_points_for_plane(v1, v2, v3, v4)
+                if calculated_points:
+                    synthetic_pointers = []
+                    for x, y, z in calculated_points:
+                        while next_synthetic_pointer in body_dict:
+                            next_synthetic_pointer += 1
+                        body_dict[next_synthetic_pointer] = Vertex(0, x, y, z, 0, 0)
+                        synthetic_pointers.append(next_synthetic_pointer)
+                        next_synthetic_pointer += 1
+                    body_dict[i].plane_pointers = tuple(synthetic_pointers)
+                    synthetic_plane_matches += 1
+                    success_flag = True
+
             if not success_flag:
                 print ('   No plane match for BSP on offset {} ({},{},{},{})'.format(i, v1,v2,v3,v4))
 
+
+    if synthetic_plane_matches:
+        print (f'   Calculated {synthetic_plane_matches} missing BSP/FACE planes with synthetic vertices')
 
     if diffs:
         print (f'   Plane matching complete with {exact_matches} exact matches and {approx_matches} approximate matches')
