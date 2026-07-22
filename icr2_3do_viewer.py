@@ -18,6 +18,10 @@ Controls:
     R               Reset camera
     Esc             Quit
 
+Menus:
+    File > Open 3DO...       Load or replace the displayed .3DO file
+    File > Open sunny.pcx... Load a 256-color PCX palette for polygon colors
+
 Scope:
     - Reads the .3DO header and body-relative record graph.
     - Displays Flavor 1 and Flavor 2 polygons.
@@ -33,8 +37,10 @@ import argparse
 import math
 import struct
 import sys
+import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
+from tkinter import filedialog, messagebox
 from typing import Iterable
 
 try:
@@ -54,12 +60,15 @@ try:
         GL_LINE,
         GL_MODELVIEW,
         GL_NORMALIZE,
+        GL_QUADS,
+        GL_RGBA,
         GL_ONE_MINUS_SRC_ALPHA,
         GL_POLYGON_OFFSET_FILL,
         GL_PROJECTION,
         GL_SMOOTH,
         GL_SRC_ALPHA,
         GL_TRIANGLES,
+        GL_UNSIGNED_BYTE,
         glBegin,
         glBlendFunc,
         glClear,
@@ -79,6 +88,11 @@ try:
         glViewport,
         glDepthFunc,
         glCullFace,
+        glDrawPixels,
+        glRasterPos2f,
+        glOrtho,
+        glPopMatrix,
+        glPushMatrix,
     )
     from OpenGL.GLU import gluLookAt, gluPerspective
 except ImportError as exc:
@@ -127,6 +141,12 @@ class Model:
     center: tuple[float, float, float]
     radius: float
     header: Header
+
+
+@dataclass(frozen=True)
+class Palette:
+    colors: tuple[tuple[float, float, float], ...]
+    filename: Path
 
 
 class Reader:
@@ -432,13 +452,36 @@ def polygon_normal(vertices: list[Vertex]) -> tuple[float, float, float]:
     return normalize((nx, ny, nz))
 
 
-def color_from_index(index: int, textured: bool) -> tuple[float, float, float]:
-    # Placeholder visualization palette. It intentionally does not claim to
-    # reproduce the game's palette.
-    seed = index & 0xFFFFFFFF
-    r = 0.35 + ((seed * 97) & 0xFF) / 510.0
-    g = 0.35 + ((seed * 57 + 83) & 0xFF) / 510.0
-    b = 0.35 + ((seed * 23 + 161) & 0xFF) / 510.0
+def load_pcx_palette(filename: Path) -> Palette:
+    """Load the 256-color VGA palette stored at the end of an 8-bit PCX file."""
+    data = filename.read_bytes()
+    if len(data) < 769:
+        raise FormatError("PCX file is too short to contain a 256-color palette.")
+    if data[-769] != 0x0C:
+        raise FormatError("PCX file does not contain a trailing 256-color VGA palette.")
+
+    palette_data = data[-768:]
+    colors = tuple(
+        (
+            palette_data[i] / 255.0,
+            palette_data[i + 1] / 255.0,
+            palette_data[i + 2] / 255.0,
+        )
+        for i in range(0, 768, 3)
+    )
+    return Palette(colors=colors, filename=filename)
+
+
+def color_from_index(index: int, textured: bool, palette: Palette | None = None) -> tuple[float, float, float]:
+    if palette is not None:
+        r, g, b = palette.colors[index & 0xFF]
+    else:
+        # Placeholder visualization palette. It intentionally does not claim to
+        # reproduce the game's palette.
+        seed = index & 0xFFFFFFFF
+        r = 0.35 + ((seed * 97) & 0xFF) / 510.0
+        g = 0.35 + ((seed * 57 + 83) & 0xFF) / 510.0
+        b = 0.35 + ((seed * 23 + 161) & 0xFF) / 510.0
     if textured:
         # Slightly neutralize textured polygons until MIP loading is added.
         average = (r + g + b) / 3.0
@@ -449,15 +492,21 @@ def color_from_index(index: int, textured: bool) -> tuple[float, float, float]:
 
 
 class Viewer:
-    def __init__(self, model: Model, filename: Path):
+    MENU_HEIGHT = 28
+    MENU_WIDTH = 72
+
+    def __init__(self, model: Model | None = None, filename: Path | None = None):
         self.model = model
         self.filename = filename
+        self.palette: Palette | None = None
+        self.menu_open = False
+        self._tk_root: tk.Tk | None = None
 
         self.width = 1100
         self.height = 750
         self.yaw = 40.0
         self.pitch = 25.0
-        self.distance = model.radius * 3.0
+        self.distance = (model.radius * 3.0) if model is not None else 1000.0
         self.pan = [0.0, 0.0, 0.0]
 
         self.wireframe = False
@@ -471,37 +520,97 @@ class Viewer:
     def reset_camera(self) -> None:
         self.yaw = 40.0
         self.pitch = 25.0
-        self.distance = self.model.radius * 3.0
+        self.distance = (self.model.radius * 3.0) if self.model is not None else 1000.0
         self.pan[:] = [0.0, 0.0, 0.0]
 
+    def _caption(self) -> str:
+        if self.model is None or self.filename is None:
+            return "ICR2 3DO Viewer — no .3DO loaded"
+        palette = f" — palette: {self.palette.filename.name}" if self.palette else ""
+        return (
+            f"ICR2 3DO Viewer — {self.filename.name} — "
+            f"{len(self.model.polygons)} polygons{palette}"
+        )
+
+    def _load_model(self, filename: Path) -> None:
+        parser = ThreeDOParser(filename)
+        self.model = parser.parse()
+        self.filename = filename
+        self.reset_camera()
+        pygame.display.set_caption(self._caption())
+        print(f"Loaded: {filename}")
+        print(f"Reachable records: {len(parser.visited_records):,}")
+        print(f"Polygons: {len(self.model.polygons):,}")
+        if parser.warnings:
+            print(f"Warnings: {len(parser.warnings)}")
+            for warning in parser.warnings[:20]:
+                print(f"  - {warning}")
+
+    def _tk(self) -> tk.Tk:
+        if self._tk_root is None:
+            self._tk_root = tk.Tk()
+            self._tk_root.withdraw()
+        return self._tk_root
+
+    def _open_3do_dialog(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self._tk(),
+            title="Open ICR2 3DO file",
+            filetypes=(("ICR2 3DO files", "*.3do *.3DO"), ("All files", "*.*")),
+        )
+        if not path:
+            return
+        try:
+            self._load_model(Path(path))
+        except (OSError, FormatError) as exc:
+            messagebox.showerror("Could not load 3DO", str(exc), parent=self._tk())
+
+    def _open_palette_dialog(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self._tk(),
+            title="Open sunny.pcx palette",
+            filetypes=(("PCX palette files", "*.pcx *.PCX"), ("All files", "*.*")),
+        )
+        if not path:
+            return
+        try:
+            self.palette = load_pcx_palette(Path(path))
+            pygame.display.set_caption(self._caption())
+            print(f"Loaded palette: {path}")
+        except (OSError, FormatError) as exc:
+            messagebox.showerror("Could not load PCX palette", str(exc), parent=self._tk())
+
     def _camera_position(self) -> tuple[float, float, float]:
+        center = self.model.center if self.model is not None else (0.0, 0.0, 0.0)
         yaw = math.radians(self.yaw)
         pitch = math.radians(self.pitch)
         horizontal = self.distance * math.cos(pitch)
         return (
-            self.model.center[0] + self.pan[0] + horizontal * math.cos(yaw),
-            self.model.center[1] + self.pan[1] + horizontal * math.sin(yaw),
-            self.model.center[2] + self.pan[2] + self.distance * math.sin(pitch),
+            center[0] + self.pan[0] + horizontal * math.cos(yaw),
+            center[1] + self.pan[1] + horizontal * math.sin(yaw),
+            center[2] + self.pan[2] + self.distance * math.sin(pitch),
         )
 
     def _target(self) -> tuple[float, float, float]:
+        center = self.model.center if self.model is not None else (0.0, 0.0, 0.0)
         return (
-            self.model.center[0] + self.pan[0],
-            self.model.center[1] + self.pan[1],
-            self.model.center[2] + self.pan[2],
+            center[0] + self.pan[0],
+            center[1] + self.pan[1],
+            center[2] + self.pan[2],
         )
 
     def _set_projection(self) -> None:
         glViewport(0, 0, max(self.width, 1), max(self.height, 1))
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        near = max(self.model.radius * 0.001, 0.01)
-        far = max(self.model.radius * 100.0, near + 1.0)
+        radius = self.model.radius if self.model is not None else 1000.0
+        near = max(radius * 0.001, 0.01)
+        far = max(radius * 100.0, near + 1.0)
         gluPerspective(45.0, self.width / max(self.height, 1), near, far)
         glMatrixMode(GL_MODELVIEW)
 
     def _draw_axes(self) -> None:
-        if not self.show_axes:
+        if not self.show_axes or self.model is None:
             return
         length = self.model.radius * 0.75
         cx, cy, cz = self.model.center
@@ -520,6 +629,9 @@ class Viewer:
         glLineWidth(1.0)
 
     def _draw_model(self) -> None:
+        if self.model is None:
+            return
+
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE if self.wireframe else GL_FILL)
 
         for polygon in self.model.polygons:
@@ -527,7 +639,7 @@ class Viewer:
                 continue
 
             normal = polygon_normal(polygon.vertices)
-            color = color_from_index(polygon.color_index, polygon.textured)
+            color = color_from_index(polygon.color_index, polygon.textured, self.palette)
             glColor3f(*color)
             glNormal3f(*normal)
 
@@ -541,6 +653,66 @@ class Viewer:
             glEnd()
 
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+
+    def _draw_text(self, font: pygame.font.Font, text: str, x: int, y: int) -> None:
+        surface = font.render(text, True, (235, 235, 235, 255))
+        data = pygame.image.tostring(surface, "RGBA", True)
+        glRasterPos2f(x, self.height - y - surface.get_height())
+        glDrawPixels(surface.get_width(), surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, data)
+
+    def _draw_rect(self, x: int, y: int, width: int, height: int, color: tuple[float, float, float]) -> None:
+        left = x
+        right = x + width
+        top = self.height - y
+        bottom = self.height - y - height
+        glColor3f(*color)
+        glBegin(GL_QUADS)
+        glVertex3f(left, bottom, 0.0)
+        glVertex3f(right, bottom, 0.0)
+        glVertex3f(right, top, 0.0)
+        glVertex3f(left, top, 0.0)
+        glEnd()
+
+    def _draw_menu(self, font: pygame.font.Font) -> None:
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, self.width, 0, self.height, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        glDisable(GL_DEPTH_TEST)
+
+        self._draw_rect(0, 0, self.width, self.MENU_HEIGHT, (0.12, 0.13, 0.15))
+        self._draw_rect(0, 0, self.MENU_WIDTH, self.MENU_HEIGHT, (0.18, 0.19, 0.22) if self.menu_open else (0.12, 0.13, 0.15))
+        self._draw_text(font, "File", 16, 7)
+        if self.menu_open:
+            self._draw_rect(0, self.MENU_HEIGHT, 210, 64, (0.16, 0.17, 0.19))
+            self._draw_text(font, "Open 3DO...", 12, self.MENU_HEIGHT + 8)
+            self._draw_text(font, "Open sunny.pcx...", 12, self.MENU_HEIGHT + 38)
+
+        glEnable(GL_DEPTH_TEST)
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+
+    def _handle_menu_click(self, position: tuple[int, int]) -> bool:
+        x, y = position
+        if y < self.MENU_HEIGHT and x < self.MENU_WIDTH:
+            self.menu_open = not self.menu_open
+            return True
+        if not self.menu_open:
+            return False
+        self.menu_open = False
+        if 0 <= x <= 210 and self.MENU_HEIGHT <= y < self.MENU_HEIGHT + 32:
+            self._open_3do_dialog()
+            return True
+        if 0 <= x <= 210 and self.MENU_HEIGHT + 32 <= y < self.MENU_HEIGHT + 64:
+            self._open_palette_dialog()
+            return True
+        return True
 
     def _pan_camera(self, dx: float, dy: float) -> None:
         yaw = math.radians(self.yaw)
@@ -558,10 +730,8 @@ class Viewer:
             (self.width, self.height),
             DOUBLEBUF | OPENGL | RESIZABLE,
         )
-        pygame.display.set_caption(
-            f"ICR2 3DO Viewer — {self.filename.name} — "
-            f"{len(self.model.polygons)} polygons"
-        )
+        pygame.display.set_caption(self._caption())
+        font = pygame.font.Font(None, 22)
 
         glClearColor(0.08, 0.09, 0.11, 1.0)
         glEnable(GL_DEPTH_TEST)
@@ -597,13 +767,16 @@ class Viewer:
                         self.reset_camera()
 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1 and self._handle_menu_click(event.pos):
+                        self.last_mouse = event.pos
+                        continue
                     if event.button == 1:
                         self.left_drag = True
                     elif event.button == 2:
                         self.middle_drag = True
                     elif event.button == 4:
                         self.distance = max(
-                            self.model.radius * 0.02,
+                            (self.model.radius * 0.02) if self.model is not None else 20.0,
                             self.distance * 0.88,
                         )
                     elif event.button == 5:
@@ -619,7 +792,7 @@ class Viewer:
                 elif event.type == pygame.MOUSEWHEEL:
                     if event.y > 0:
                         self.distance = max(
-                            self.model.radius * 0.02,
+                            (self.model.radius * 0.02) if self.model is not None else 20.0,
                             self.distance * (0.88 ** event.y),
                         )
                     elif event.y < 0:
@@ -656,6 +829,7 @@ class Viewer:
             self._draw_model()
             glDisable(GL_CULL_FACE)
             self._draw_axes()
+            self._draw_menu(font)
 
             pygame.display.flip()
             clock.tick(120)
@@ -665,36 +839,38 @@ class Viewer:
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Quick OpenGL viewer for ICR2 .3DO files.")
-    parser.add_argument("file", type=Path, help="Path to an ICR2 .3DO file")
+    parser.add_argument("file", type=Path, nargs="?", help="Path to an ICR2 .3DO file")
     return parser.parse_args(argv)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
-    if not args.file.is_file():
-        print(f"File not found: {args.file}", file=sys.stderr)
-        return 2
+    model = None
+    if args.file is not None:
+        if not args.file.is_file():
+            print(f"File not found: {args.file}", file=sys.stderr)
+            return 2
 
-    try:
-        parser = ThreeDOParser(args.file)
-        model = parser.parse()
-    except (OSError, FormatError) as exc:
-        print(f"Could not load {args.file}: {exc}", file=sys.stderr)
-        return 1
+        try:
+            parser = ThreeDOParser(args.file)
+            model = parser.parse()
+        except (OSError, FormatError) as exc:
+            print(f"Could not load {args.file}: {exc}", file=sys.stderr)
+            return 1
 
-    print(f"Loaded: {args.file}")
-    print(f"Body size: {model.header.body_size:,} bytes")
-    print(f"Reachable records: {len(parser.visited_records):,}")
-    print(f"Polygons: {len(model.polygons):,}")
-    print(f"MIP resources: {len(model.header.mip_names)}")
-    print(f"PMP resources: {len(model.header.pmp_names)}")
-    print(f"External 3DO resources: {len(model.header.object_names)}")
-    if parser.warnings:
-        print(f"Warnings: {len(parser.warnings)}")
-        for warning in parser.warnings[:20]:
-            print(f"  - {warning}")
-        if len(parser.warnings) > 20:
-            print(f"  ... {len(parser.warnings) - 20} more")
+        print(f"Loaded: {args.file}")
+        print(f"Body size: {model.header.body_size:,} bytes")
+        print(f"Reachable records: {len(parser.visited_records):,}")
+        print(f"Polygons: {len(model.polygons):,}")
+        print(f"MIP resources: {len(model.header.mip_names)}")
+        print(f"PMP resources: {len(model.header.pmp_names)}")
+        print(f"External 3DO resources: {len(model.header.object_names)}")
+        if parser.warnings:
+            print(f"Warnings: {len(parser.warnings)}")
+            for warning in parser.warnings[:20]:
+                print(f"  - {warning}")
+            if len(parser.warnings) > 20:
+                print(f"  ... {len(parser.warnings) - 20} more")
 
     Viewer(model, args.file).run()
     return 0
