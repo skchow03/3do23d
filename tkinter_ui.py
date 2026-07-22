@@ -50,6 +50,25 @@ class QueueWriter(io.TextIOBase):
         return None
 
 
+class TeeWriter(io.TextIOBase):
+    """File-like writer that writes text to multiple streams."""
+
+    def __init__(self, *writers: io.TextIOBase) -> None:
+        self.writers = writers
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        for writer in self.writers:
+            writer.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        for writer in self.writers:
+            writer.flush()
+
+
 class ConverterApp(tk.Tk):
     """Small desktop UI for converting ICR2 3DO files to N3 3D files."""
 
@@ -70,6 +89,7 @@ class ConverterApp(tk.Tk):
         self.combine_data_with_list = tk.BooleanVar(value=False)
         self.generate_missing_planes = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Ready")
+        self.current_step = tk.StringVar(value="Idle")
 
         self._build_ui()
         self.after(100, self._drain_output_queue)
@@ -80,7 +100,7 @@ class ConverterApp(tk.Tk):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         main.columnconfigure(1, weight=1)
-        main.rowconfigure(7, weight=1)
+        main.rowconfigure(8, weight=1)
 
         mode = ttk.LabelFrame(main, text="Conversion mode", padding=8)
         mode.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 12))
@@ -119,14 +139,19 @@ class ConverterApp(tk.Tk):
         ttk.Checkbutton(options, text="Generate inline vertices for missing BSP/FACE planes", variable=self.generate_missing_planes).grid(row=2, column=0, sticky="w")
 
         actions = ttk.Frame(main)
-        actions.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        actions.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 6))
         self.convert_button = ttk.Button(actions, text="Convert", command=self._start_conversion)
         self.convert_button.pack(side="left")
         ttk.Button(actions, text="Clear log", command=self._clear_log).pack(side="left", padx=8)
         ttk.Label(actions, textvariable=self.status).pack(side="right")
 
+        progress = ttk.LabelFrame(main, text="Current conversion step", padding=8)
+        progress.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        progress.columnconfigure(0, weight=1)
+        ttk.Label(progress, textvariable=self.current_step, wraplength=620).grid(row=0, column=0, sticky="ew")
+
         self.log = scrolledtext.ScrolledText(main, height=14, state="disabled", wrap="word")
-        self.log.grid(row=7, column=0, columnspan=3, sticky="nsew")
+        self.log.grid(row=8, column=0, columnspan=3, sticky="nsew")
         self._update_mode()
 
     def _browse_input(self) -> None:
@@ -195,6 +220,7 @@ class ConverterApp(tk.Tk):
 
         self.convert_button.configure(state="disabled")
         self.status.set("Converting...")
+        self.current_step.set("Starting worker thread...")
         self.worker = threading.Thread(target=worker_target, args=worker_args, daemon=True)
         self.worker.start()
 
@@ -222,6 +248,7 @@ class ConverterApp(tk.Tk):
                     sort_vertices=options["sort_vertices"],
                     combine_data_with_list=options["combine_data_with_list"],
                     generate_missing_planes=options["generate_missing_planes"],
+                    progress_callback=self._queue_progress,
                 )
         except Exception as exc:  # noqa: BLE001 - surface converter errors in the UI.
             self.output_queue.put(f"\nConversion failed while converting {input_file}: {exc}\n")
@@ -244,8 +271,10 @@ class ConverterApp(tk.Tk):
             for index, input_file in enumerate(input_files, start=1):
                 print(f"\n[{index}/{len(input_files)}] Converting {input_file}")
                 conversion_output = io.StringIO()
+                tee_writer = TeeWriter(writer, conversion_output)
+                self._queue_progress(f"Starting file {index}/{len(input_files)}: {input_file.name}")
                 try:
-                    with contextlib.redirect_stdout(conversion_output), contextlib.redirect_stderr(conversion_output):
+                    with contextlib.redirect_stdout(tee_writer), contextlib.redirect_stderr(tee_writer):
                         converter.convert_3do23d(
                             filename=str(input_file),
                             output_file=str(input_file.with_suffix(".3d")),
@@ -253,16 +282,15 @@ class ConverterApp(tk.Tk):
                             sort_vertices=options["sort_vertices"],
                             combine_data_with_list=options["combine_data_with_list"],
                             generate_missing_planes=options["generate_missing_planes"],
+                            progress_callback=self._queue_progress,
                         )
                 except Exception as exc:  # noqa: BLE001 - keep batch conversion running.
-                    print(conversion_output.getvalue(), end="")
                     print(f"Conversion failed for {input_file}: {exc}")
                     print("Detailed error location:")
                     print(traceback.format_exc(), end="")
                     results.append(FolderConversionResult(path=input_file, converted=False, error=str(exc)))
                 else:
                     output_text = conversion_output.getvalue()
-                    print(output_text, end="")
                     results.append(
                         FolderConversionResult(
                             path=input_file,
@@ -270,6 +298,7 @@ class ConverterApp(tk.Tk):
                             plane_messages=self._collect_plane_messages(output_text),
                         )
                     )
+        self._queue_progress("Folder conversion complete")
         failures = sum(not result.converted for result in results)
         self.output_queue.put(FolderConversionSummary(results=results))
         if failures:
@@ -278,6 +307,9 @@ class ConverterApp(tk.Tk):
         else:
             self.output_queue.put("\nFolder conversion finished successfully.\n")
             self.output_queue.put("__STATUS__:DONE_FOLDER")
+
+    def _queue_progress(self, message: str) -> None:
+        self.output_queue.put(f"__PROGRESS__:{message}")
 
     @staticmethod
     def _collect_plane_messages(output_text: str) -> list[str]:
@@ -307,16 +339,24 @@ class ConverterApp(tk.Tk):
                 text = self.output_queue.get_nowait()
                 if text == "__STATUS__:DONE":
                     self.status.set("Done")
+                    self.current_step.set("Conversion complete")
                     self.convert_button.configure(state="normal")
                     messagebox.showinfo("Conversion complete", "The 3DO file was converted successfully.")
                 elif text == "__STATUS__:DONE_FOLDER":
                     self.status.set("Done")
+                    self.current_step.set("Folder conversion complete")
                     self.convert_button.configure(state="normal")
                 elif text == "__STATUS__:ERROR_FOLDER":
                     self.status.set("Error")
+                    self.current_step.set("Folder conversion finished with errors")
                     self.convert_button.configure(state="normal")
+                elif isinstance(text, str) and text.startswith("__PROGRESS__:"):
+                    progress_text = text.removeprefix("__PROGRESS__:")
+                    self.current_step.set(progress_text)
+                    self._append_log(f"[progress] {progress_text}\n")
                 elif text == "__STATUS__:ERROR":
                     self.status.set("Error")
+                    self.current_step.set("Conversion failed; see log for detailed error location")
                     self.convert_button.configure(state="normal")
                     messagebox.showerror("Conversion failed", "See the log for details.")
                 elif isinstance(text, FolderConversionSummary):

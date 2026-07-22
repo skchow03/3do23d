@@ -2,12 +2,26 @@ from binary import *
 from flavors_icr2 import *
 from plane import *
 import itertools
+import time
+from collections.abc import Callable
+
+
+def _emit_progress(progress_callback, message):
+    if progress_callback is not None:
+        progress_callback(message)
+
+
+def _format_elapsed(start_time):
+    return f"{time.monotonic() - start_time:.1f}s"
 
 def print_list(list):
     new_list = [x.decode('ascii').rstrip('\x00') for x in list]
     print (new_list)
 
-def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False, generate_missing_planes=False):
+def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False, generate_missing_planes=False, progress_callback: Callable[[str], None] | None = None):
+
+    start_time = time.monotonic()
+    _emit_progress(progress_callback, 'Preparing conversion')
 
     if not output_file:
         output_file = filename[:len(filename)-4] + '.3d'
@@ -22,6 +36,7 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     # Read whole file
     with open(filename, 'rb') as f:
         bytes = f.read()
+    _emit_progress(progress_callback, f'Read {len(bytes):,} bytes from source file ({_format_elapsed(start_time)})')
 
     # Read header
     body_size = get_int32(bytes,0)
@@ -74,7 +89,14 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     # Identify F17 in tracks (they seem to be not called by the root)
     # TO DO: this will also identify the unknown bytes after the root
     print ('Identifying Flavor 17')
+    _emit_progress(progress_callback, f'Scanning {body_size:,} body bytes for Flavor 17 records')
+    next_progress_at = 0
+    progress_step = max(body_size // 20, 1)
     for cur_pos in range(0,body_size):
+        if cur_pos >= next_progress_at:
+            percent = (cur_pos / body_size * 100) if body_size else 100
+            _emit_progress(progress_callback, f'Scanning body for Flavor 17: {cur_pos:,}/{body_size:,} bytes ({percent:.0f}%, {_format_elapsed(start_time)})')
+            next_progress_at = cur_pos + progress_step
 
         flavor = get_hex(body, cur_pos)
         flavor_type = get_flavor(flavor, mode='type')
@@ -86,6 +108,8 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
             sw4 = get_int32(body,cur_pos+16)
             body_dict[cur_pos] = Data(sw1, sw2, sw3, sw4)
 
+    _emit_progress(progress_callback, 'Following flavor pointers from root')
+    processed_flavors = 0
     while True:
         # if root offset is not checked, check it
         if root:
@@ -98,6 +122,10 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
         # If all the lists are empty, then exit the loop
         else:
             break
+
+        processed_flavors += 1
+        if processed_flavors == 1 or processed_flavors % 250 == 0:
+            _emit_progress(progress_callback, f'Parsed {processed_flavors:,} flavor records; pending pointers: {len(root) + len(flavor_pointers):,} ({_format_elapsed(start_time)})')
 
         flavor = get_hex(body, cur_pos)
         flavor_type = get_flavor(flavor, mode='type')
@@ -246,6 +274,7 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
             print ('Pointer to {} not found'.format(cur_pos))
 
     # Identify vertices in nomip that is already in mip
+    _emit_progress(progress_callback, f'Finished parsing {processed_flavors:,} flavor records; identifying vertices')
     print ('Identifying vertices')
     to_remove = []
     for pointer in vertices_nomip:
@@ -257,6 +286,7 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     vertex_set = set()
 
     # Get Vertices
+    _emit_progress(progress_callback, f'Reading {len(vertices_nomip) + len(vertices_mip):,} vertices')
     for pointer in vertices_nomip:
         x = get_int32(body,pointer+4)
         y = get_int32(body,pointer+8)
@@ -278,13 +308,17 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     print ('Vertices in set: {}'.format(len(vertex_set)))
 
 
+    _emit_progress(progress_callback, f'Loaded {len(vertex_set):,} unique vertices; building polygon plane lookup')
+
     # Create dictionary of POLYs and their 4-value planes based on the first
     # 3 pointers
     poly_plane_dict = {}
     num_polys = 0
 
     # Iterate through all POLYs
-    for i in body_dict:
+    for plane_index, i in enumerate(body_dict, start=1):
+        if plane_index == 1 or plane_index % 500 == 0:
+            _emit_progress(progress_callback, f'Building polygon plane lookup: {plane_index:,}/{len(body_dict):,} commands ({_format_elapsed(start_time)})')
         flavor = body_dict[i]
 
         if flavor.flav == 1 or flavor.flav == 2:
@@ -306,12 +340,16 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
 
     # Find plane in each FACE or BSP flavor:
     print ('Finding points for planes...')
+    plane_candidates = [pointer for pointer in body_dict if 5 <= body_dict[pointer].flav <= 10]
+    _emit_progress(progress_callback, f'Matching BSP/FACE planes for {len(plane_candidates):,} commands against {len(poly_plane_dict):,} possible planes')
     poly_plane_list = poly_plane_dict.keys()
     total_count = 0
     success = 0
     generated_planes = 0
     failed_generated_planes = 0
-    for i in list(body_dict):
+    for checked_index, i in enumerate(plane_candidates, start=1):
+        if checked_index == 1 or checked_index % 100 == 0 or checked_index == len(plane_candidates):
+            _emit_progress(progress_callback, f'Matching planes: {checked_index:,}/{len(plane_candidates):,} checked, {success:,} matched ({_format_elapsed(start_time)})')
 
         if 5 <= body_dict[i].flav <= 10:
             success_flag = False
@@ -364,6 +402,8 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
         print ('Generated {} planes from BSP/FACE values'.format(generated_planes))
         if failed_generated_planes > 0:
             print ('Could not generate {} planes from BSP/FACE values'.format(failed_generated_planes))
+
+    _emit_progress(progress_callback, f'Plane matching complete: {success:,}/{total_count:,} matched; preparing output')
 
     # Transfer group from PolyT to Material
     for i in body_dict:
@@ -418,6 +458,7 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     print ('PMP files: ',end='')
     print_list(pmp_file_list)
 
+    _emit_progress(progress_callback, f'Writing {len(sorted_pointers):,} commands to {output_file}')
     with open(output_file, 'w') as o:
         print ('Writing to {}...'.format(output_file), end='')
         o.write('3D VERSION 3.0;\n')
@@ -426,3 +467,4 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
             o.write(body_dict[i].output_text() + ';\n')
 
     print ('done')
+    _emit_progress(progress_callback, f'Conversion complete in {_format_elapsed(start_time)}')
