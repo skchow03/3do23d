@@ -69,6 +69,8 @@ class Dynamic:
         self.flav = 15
 
     def output_text(self):
+
+
         return 'DYNAMIC {}, {}, {}, {}, {}, {}, 1, EXTERN "{}"'.format(
                             self.x, self.y, self.z,
                             self.z_rot, self.y_rot, self.x_rot,
@@ -82,7 +84,6 @@ class Poly:
 
     def output_text(self):
         if len(self.unique_pointers) > 2:
-            # Check if we have a POLY of only two unique points. If so, it's a LINE. But this should never happen for ICR2 which doesn't support LINE.
             cmd = 'POLY <{}> '.format(self.color) + '{'
             for i in range(0,len(self.pointers)):
                 cmd += '_{}'.format(self.pointers[i])
@@ -175,6 +176,8 @@ class Face:
         self.v2 = get_int32(body, cur_pos+8)
         self.v3 = get_int32(body, cur_pos+12)
         self.v4 = get_int64(body, cur_pos+16)
+        self.v5 = get_int32(body, cur_pos+16)
+        self.v6 = get_int32(body, cur_pos+20)
         self.flavor1 = get_int32(body, cur_pos+24)
         self.type = type
         if type == 6:
@@ -195,8 +198,8 @@ class Face:
             ptr1, ptr2, ptr3 = self.plane_pointers
             cmd += '(_{}, _{}, _{}), _{}'.format(ptr1, ptr2, ptr3, self.flavor1)
         else:
-            cmd += '({}, {}, {}, {}), _{}'.format(
-                self.v1, self.v2, self.v3, self.v4, self.flavor1)
+            cmd += '({}, {}, {}, {}, {}), _{}'.format(
+                self.v1, self.v2, self.v3, self.v5, self.v6, self.flavor1)
 
         if self.type == 6:
             cmd += ', _{}'.format(self.flavor2)
@@ -211,6 +214,8 @@ class BSP:
         self.v2 = get_int32(body,cur_pos+8)
         self.v3 = get_int32(body,cur_pos+12)
         self.v4 = get_int64(body,cur_pos+16)
+        self.v5 = get_int32(body,cur_pos+16)
+        self.v6 = get_int32(body,cur_pos+20)
         self.p1 = get_int32(body,cur_pos+24)
         self.p2 = get_int32(body,cur_pos+28)
         if type == 7 or type == 8 or type == 9:
@@ -225,7 +230,7 @@ class BSP:
             ptr1, ptr2, ptr3 = self.plane_pointers
             plane_cmd = '(_{}, _{}, _{}),'.format(ptr1, ptr2, ptr3)
         else:
-            plane_cmd = '({}, {}, {}, {}),'.format(self.v1, self.v2, self.v3, self.v4)
+            plane_cmd = '({}, {}, {}, {}, {}),'.format(self.v1, self.v2, self.v3, self.v5, self.v6)
 
         if self.flav == 7:
             cmd = 'BSPF {} _{}, _{}, _{}'.format(
@@ -288,28 +293,22 @@ class Superobj:
                     pointer_count += 1
         return cmd
 
-class Recolor:
-    # This function is not converted using any available 3d23do tool. You may need to
-    # manually hex edit the 3do file
-
+class Redef:
     def __init__(self):
-        self.recolors = []
+        self.redef = []
         self.flav = 14
 
     def output_text(self):
         cmd = 'RECOLOR ('
-        for i in range(0, len(self.recolors)):
-            cmd += '{}: {}'.format(self.recolors[i][0], self.recolors[i][1])
-            if i == len(self.recolors)-1:
+        for i in range(0, len(self.redef)):
+            cmd += '{}: {}'.format(self.redef[i][0], self.redef[i][1])
+            if i == len(self.redef)-1:
                 cmd += ')'
             else:
                 cmd += ', '
         return cmd
 
-class SwitchDistance:
-    # ICR2 only uses SWITCH DISTANCE for car models. Not used in tracks. N3 tracks
-    # have SWITCH DISTANCE with fewer parameters. ICR2 cars have 9 (i.e. including 4 distances).
-
+class Res:
     def __init__(self, res1, res2, res3, res4, res5, res6, res7, res8, res9):
         self.res1 = res1
         self.res2 = res2
@@ -323,42 +322,17 @@ class SwitchDistance:
         self.flav = 13
 
     def output_text(self):
-        if self.res2 == 0:
-            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{})}}'.format(
-                self.res1,
-                self.res2,
-                self.res3,
-            )
-        elif self.res4 == 0:
-            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{}), ({} ? _{})}}'.format(
-                self.res1,
-                self.res2,
-                self.res3,
-                self.res4,
-                self.res5,
-            )
-        elif self.res6 == 0:
-            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{}), ({} ? _{}), ({} ? _{})}}'.format(
-                self.res1,
-                self.res2,
-                self.res3,
-                self.res4,
-                self.res5,
-                self.res6,
-                self.res7,
-            )
-        elif self.res8 == 0:
-            cmd = 'SWITCH DISTANCE (_{}) > {{({} ? _{}), ({} ? _{}), ({} ? _{}), ({} ? _{})}}'.format(
-                self.res1,
-                self.res2,
-                self.res3,
-                self.res4,
-                self.res5,
-                self.res6,
-                self.res7,
-                self.res8,
-                self.res9
-            )
+        cmd = 'SWITCH DISTANCE: _{} > (({} ? _{}), ({} ? _{}), ({} ? _{}), ({} ? _{}))'.format(
+            self.res1,
+            self.res2,
+            self.res3,
+            self.res4,
+            self.res5,
+            self.res6,
+            self.res7,
+            self.res8,
+            self.res9
+        )
         return cmd
 
 class PMP:
@@ -369,7 +343,22 @@ class PMP:
         self.flav = 3
 
     def output_text(self):
-        cmd = 'PMAP _{}, {}, "{}")'.format(
+        cmd = 'SRB _{}, {}, "{}"'.format(
+            self.val1,
+            self.val2,
+            self.pmp_name
+        )
+        return cmd
+
+class PMP2:
+    def __init__(self, val1, val2, pmp_name):
+        self.val1 = val1
+        self.val2 = val2
+        self.pmp_name = pmp_name
+        self.flav = 3
+
+    def output_text(self):
+        cmd = 'PMP2 _{}, {}, "{}"'.format(
             self.val1,
             self.val2,
             self.pmp_name
@@ -393,7 +382,7 @@ def get_flavor(flavor, mode='name'):
     '0a000080':('BSPN','F10'),
     '0b000080':('LIST','F11'),
     '0c000080':('DYNO','F12'),
-    '0d000080':('SWITCH','F13'),
+    '0d000080':('RES','F13'),
     '0e000080':('REDEF','F14'),
     '0f000080':('DYNAMIC','F15'),
     '10000080':('SUPEROBJ','F16'),
