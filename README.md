@@ -20,7 +20,7 @@ python 3do23d.py <input 3DO file> [options]
 - `--tolerance`: When searching for matching polygons for the BSP function coefficients, this option allows matching polygons that deviate slightly from the coefficients in the .3DO file.
 - `--sort_vertices`: Moves all the vertices to the beginning of the output file. This may be required to ensure compatibility with Papyrus 3d23do.
 - `--combine_data_with_list`: In N3 .3D files, the DATA with DLONGs is within the LIST lines, whereas in ICR2 .3DO files, DATA is a separate statement. This option makes the file conform to N3 format.
-- `--generate_missing_planes`: If a FACE or BSP plane cannot be matched to existing polygon vertices, generate three new vertices from that FACE/BSP plane equation and use them as the plane reference. If the plane values cannot produce integer vertices, the program prints a message saying so.
+- `--generate_missing_planes`: If a FACE or BSP plane cannot be matched to existing polygon vertices, generate three inline coordinate vertices from that FACE/BSP plane equation and write them directly inside the FACE/BSP plane reference. If the plane values cannot produce integer vertices, the program prints a message saying so.
 
 ## Example
 ```
