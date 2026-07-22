@@ -29,7 +29,7 @@ Run the Tkinter UI if you prefer selecting files and options from a simple deskt
 python tkinter_ui.py
 ```
 
-The UI exposes the same converter options as the command line, shows converter output in a log panel, and keeps the window responsive while conversion runs.
+The UI exposes the same converter options as the command line, shows converter output in a log panel, and keeps the window responsive while conversion runs. Use the conversion mode selector to convert either one selected `.3DO` file or every `.3DO` file in a selected folder. Folder conversions write each `.3D` file next to its source file with the same base name.
 
 ## Example
 ```
