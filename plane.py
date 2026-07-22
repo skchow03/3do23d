@@ -60,3 +60,72 @@ def compare_planes(plane1, plane2):
     max_diff = max([abs(diffA), abs(diffB), abs(diffC), abs(diffD)])
 
     return max_diff
+
+
+def _extended_gcd(a, b):
+    """Return (g, x, y) where ax + by = g = gcd(a, b)."""
+    old_r, r = abs(a), abs(b)
+    old_s, s = 1, 0
+    old_t, t = 0, 1
+
+    while r:
+        q = old_r // r
+        old_r, r = r, old_r - q * r
+        old_s, s = s, old_s - q * s
+        old_t, t = t, old_t - q * t
+
+    if a < 0:
+        old_s = -old_s
+    if b < 0:
+        old_t = -old_t
+
+    return old_r, old_s, old_t
+
+def _cross(u, v):
+    return (
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    )
+
+def _is_zero_vector(vector):
+    return all(value == 0 for value in vector)
+
+def _are_collinear(u, v):
+    return _is_zero_vector(_cross(u, v))
+
+def get_points_on_plane(A, B, C, D):
+    """Return three integer points on Ax + By + Cz + D = 0.
+
+    Returns None if the plane has no integer solution or has an invalid normal.
+    """
+    if A == 0 and B == 0 and C == 0:
+        return None
+
+    gcd_ab, x_ab, y_ab = _extended_gcd(A, B)
+    gcd_abc, z_ab, z_c = _extended_gcd(gcd_ab, C)
+
+    if D % gcd_abc != 0:
+        return None
+
+    scale = -D // gcd_abc
+    p0 = (x_ab * z_ab * scale, y_ab * z_ab * scale, z_c * scale)
+    normal = (A, B, C)
+
+    directions = [
+        _cross(normal, (1, 0, 0)),
+        _cross(normal, (0, 1, 0)),
+        _cross(normal, (0, 0, 1)),
+    ]
+    directions = [direction for direction in directions if not _is_zero_vector(direction)]
+
+    for i, direction1 in enumerate(directions):
+        for direction2 in directions[i + 1:]:
+            if not _are_collinear(direction1, direction2):
+                return (
+                    p0,
+                    (p0[0] + direction1[0], p0[1] + direction1[1], p0[2] + direction1[2]),
+                    (p0[0] + direction2[0], p0[1] + direction2[1], p0[2] + direction2[2]),
+                )
+
+    return None
