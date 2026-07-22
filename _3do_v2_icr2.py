@@ -195,11 +195,11 @@ def convert_3do23d(filename, output_file=None, tolerance=1, sort_vertices=False,
             res7 = get_int32(body,cur_pos + 28)
             res8 = get_int32(body,cur_pos + 32)
             res9 = get_int32(body,cur_pos + 36)
-            body_dict[cur_pos] = SwitchDistance(res1, res2, res3, res4, res5, res6, res7, res8, res9)
+            body_dict[cur_pos] = Res(res1, res2, res3, res4, res5, res6, res7, res8, res9)
 
             
             if res2 == 0:
-                flavor_pointers.extend((res3))
+                flavor_pointers.append(res3)
             elif res4 == 0:
                 flavor_pointers.extend((res3, res5))
             elif res6 == 0:
