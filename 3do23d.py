@@ -16,6 +16,7 @@ def main():
     parser.add_argument("--tolerance", type=float, default=1, help="Tolerance level for conversion. Default is 1.")
     parser.add_argument("--sort_vertices", action="store_true", help="Enable sorting of vertices.")
     parser.add_argument("--combine_data_with_list", action="store_true", help="For tracks, combine DATA with LIST if enabled.")
+    parser.add_argument("--generate_missing_planes", action="store_true", help="Generate plane vertices from BSP/FACE values when no existing vertices match.")
 
     args = parser.parse_args()
 
@@ -25,7 +26,8 @@ def main():
         output_file=args.output_file,
         tolerance=args.tolerance,
         sort_vertices=args.sort_vertices,
-        combine_data_with_list=args.combine_data_with_list
+        combine_data_with_list=args.combine_data_with_list,
+        generate_missing_planes=args.generate_missing_planes
     )
 
 if __name__ == "__main__":

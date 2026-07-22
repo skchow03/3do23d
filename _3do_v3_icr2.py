@@ -7,7 +7,7 @@ def print_list(list):
     new_list = [x.decode('ascii').rstrip('\x00') for x in list]
     print (new_list)
 
-def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False):
+def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False, generate_missing_planes=False):
 
     if not output_file:
         output_file = filename[:len(filename)-4] + '.3d'
@@ -15,6 +15,7 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     print ('3do file: {}'.format(filename))
     print ('Output .3d file: {}'.format(output_file))
     print ('Plane matching tolerance: {}%'.format(tolerance*100))
+    print ('Generate missing planes: {}'.format(generate_missing_planes))
 
     body_dict = {}
 
@@ -308,7 +309,10 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     poly_plane_list = poly_plane_dict.keys()
     total_count = 0
     success = 0
-    for i in body_dict:
+    generated_planes = 0
+    failed_generated_planes = 0
+    next_generated_pointer = max(body_dict.keys(), default=0) + 4
+    for i in list(body_dict):
 
         if 5 <= body_dict[i].flav <= 10:
             success_flag = False
@@ -342,10 +346,33 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
                         success += 1
                         success_flag = True
                         break
+            if not success_flag and generate_missing_planes:
+                points = get_points_on_plane(v1, v2, v3, v4)
+                if points:
+                    plane_pointers = []
+                    for point in points:
+                        while next_generated_pointer in body_dict:
+                            next_generated_pointer += 4
+                        body_dict[next_generated_pointer] = Vertex(0, point[0], point[1], point[2], 0, 0)
+                        vertex_set.add(point)
+                        plane_pointers.append(next_generated_pointer)
+                        next_generated_pointer += 4
+                    body_dict[i].plane_pointers = tuple(plane_pointers)
+                    success += 1
+                    generated_planes += 1
+                    success_flag = True
+                    print ('Generated plane vertices for offset {} from ({},{},{},{})'.format(i, v1,v2,v3,v4))
+                else:
+                    failed_generated_planes += 1
+                    print ('Could not generate plane vertices for offset {} from ({},{},{},{})'.format(i, v1,v2,v3,v4))
             if not success_flag:
                 print ('No plane match for on offset {} ({},{},{},{})'.format(i, v1,v2,v3,v4))
     if total_count > 0:
         print ('Matching success {} out of {}, or {}%'.format(success, total_count, success/total_count * 100))
+    if generate_missing_planes:
+        print ('Generated {} planes from BSP/FACE values'.format(generated_planes))
+        if failed_generated_planes > 0:
+            print ('Could not generate {} planes from BSP/FACE values'.format(failed_generated_planes))
 
     # Transfer group from PolyT to Material
     for i in body_dict:
