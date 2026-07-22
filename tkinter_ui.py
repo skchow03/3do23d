@@ -8,16 +8,34 @@ import queue
 import threading
 import traceback
 import tkinter as tk
+from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import _3do_v3_icr2 as converter
 
 
+@dataclass
+class FolderConversionResult:
+    """Conversion details for one file in a folder conversion."""
+
+    path: Path
+    converted: bool
+    plane_messages: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass
+class FolderConversionSummary:
+    """Summary of a completed folder conversion."""
+
+    results: list[FolderConversionResult]
+
+
 class QueueWriter(io.TextIOBase):
     """File-like writer that forwards text to a thread-safe queue."""
 
-    def __init__(self, output_queue: queue.Queue[str]) -> None:
+    def __init__(self, output_queue: queue.Queue[str | FolderConversionSummary]) -> None:
         self.output_queue = output_queue
 
     def writable(self) -> bool:
@@ -40,7 +58,7 @@ class ConverterApp(tk.Tk):
         self.title("3do23d Converter")
         self.minsize(680, 520)
 
-        self.output_queue: queue.Queue[str] = queue.Queue()
+        self.output_queue: queue.Queue[str | FolderConversionSummary] = queue.Queue()
         self.worker: threading.Thread | None = None
 
         self.conversion_mode = tk.StringVar(value="file")
@@ -221,30 +239,55 @@ class ConverterApp(tk.Tk):
         options: dict[str, bool],
     ) -> None:
         writer = QueueWriter(self.output_queue)
-        failures = 0
+        results: list[FolderConversionResult] = []
         with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
             for index, input_file in enumerate(input_files, start=1):
                 print(f"\n[{index}/{len(input_files)}] Converting {input_file}")
+                conversion_output = io.StringIO()
                 try:
-                    converter.convert_3do23d(
-                        filename=str(input_file),
-                        output_file=str(input_file.with_suffix(".3d")),
-                        tolerance=tolerance,
-                        sort_vertices=options["sort_vertices"],
-                        combine_data_with_list=options["combine_data_with_list"],
-                        generate_missing_planes=options["generate_missing_planes"],
-                    )
+                    with contextlib.redirect_stdout(conversion_output), contextlib.redirect_stderr(conversion_output):
+                        converter.convert_3do23d(
+                            filename=str(input_file),
+                            output_file=str(input_file.with_suffix(".3d")),
+                            tolerance=tolerance,
+                            sort_vertices=options["sort_vertices"],
+                            combine_data_with_list=options["combine_data_with_list"],
+                            generate_missing_planes=options["generate_missing_planes"],
+                        )
                 except Exception as exc:  # noqa: BLE001 - keep batch conversion running.
-                    failures += 1
+                    print(conversion_output.getvalue(), end="")
                     print(f"Conversion failed for {input_file}: {exc}")
                     print("Detailed error location:")
                     print(traceback.format_exc(), end="")
+                    results.append(FolderConversionResult(path=input_file, converted=False, error=str(exc)))
+                else:
+                    output_text = conversion_output.getvalue()
+                    print(output_text, end="")
+                    results.append(
+                        FolderConversionResult(
+                            path=input_file,
+                            converted=True,
+                            plane_messages=self._collect_plane_messages(output_text),
+                        )
+                    )
+        failures = sum(not result.converted for result in results)
+        self.output_queue.put(FolderConversionSummary(results=results))
         if failures:
             self.output_queue.put(f"\nFolder conversion finished with {failures} failure(s).\n")
-            self.output_queue.put("__STATUS__:ERROR")
+            self.output_queue.put("__STATUS__:ERROR_FOLDER")
         else:
             self.output_queue.put("\nFolder conversion finished successfully.\n")
             self.output_queue.put("__STATUS__:DONE_FOLDER")
+
+    @staticmethod
+    def _collect_plane_messages(output_text: str) -> list[str]:
+        plane_prefixes = (
+            "Generated inline plane vertices",
+            "Could not generate plane vertices",
+            "No plane match",
+            "Could not generate ",
+        )
+        return [line for line in output_text.splitlines() if line.startswith(plane_prefixes)]
 
     def _update_mode(self) -> None:
         if self.conversion_mode.get() == "folder":
@@ -269,16 +312,58 @@ class ConverterApp(tk.Tk):
                 elif text == "__STATUS__:DONE_FOLDER":
                     self.status.set("Done")
                     self.convert_button.configure(state="normal")
-                    messagebox.showinfo("Conversion complete", "All 3DO files in the folder were converted successfully.")
+                elif text == "__STATUS__:ERROR_FOLDER":
+                    self.status.set("Error")
+                    self.convert_button.configure(state="normal")
                 elif text == "__STATUS__:ERROR":
                     self.status.set("Error")
                     self.convert_button.configure(state="normal")
                     messagebox.showerror("Conversion failed", "See the log for details.")
+                elif isinstance(text, FolderConversionSummary):
+                    self._show_folder_summary(text)
                 else:
                     self._append_log(text)
         except queue.Empty:
             pass
         self.after(100, self._drain_output_queue)
+
+
+    def _show_folder_summary(self, summary: FolderConversionSummary) -> None:
+        converted_clean = [result for result in summary.results if result.converted and not result.plane_messages]
+        converted_with_plane_issues = [result for result in summary.results if result.converted and result.plane_messages]
+        failed = [result for result in summary.results if not result.converted]
+
+        message_lines = [
+            f"Converted without BSP/FACE plane issues: {len(converted_clean)}",
+            *self._format_summary_paths(converted_clean),
+            "",
+            f"Converted with BSP/FACE plane issues: {len(converted_with_plane_issues)}",
+            *self._format_summary_paths(converted_with_plane_issues, include_plane_messages=True),
+            "",
+            f"Failed to convert: {len(failed)}",
+            *self._format_summary_paths(failed, include_errors=True),
+        ]
+        messagebox.showinfo("Folder conversion results", "\n".join(message_lines))
+
+    @staticmethod
+    def _format_summary_paths(
+        results: list[FolderConversionResult],
+        *,
+        include_plane_messages: bool = False,
+        include_errors: bool = False,
+    ) -> list[str]:
+        if not results:
+            return ["  (none)"]
+
+        lines: list[str] = []
+        for result in results:
+            lines.append(f"  • {result.path.name}")
+            if include_plane_messages:
+                for message in result.plane_messages:
+                    lines.append(f"    - {message}")
+            if include_errors and result.error:
+                lines.append(f"    - {result.error}")
+        return lines
 
     def _append_log(self, text: str) -> None:
         self.log.configure(state="normal")
