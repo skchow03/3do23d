@@ -4,6 +4,10 @@ def papy_angle_to_deg(angle):
     return round((180/2147483648 * angle) * 10)
 
 
+def format_plane_points(points):
+    return ', '.join('[{}, {}, {}]'.format(x, y, z) for x, y, z in points)
+
+
 class Vertex:
     """ Vertices can be Type 0 (coordinates only), Type 1 (includes mip coords),
     or Type 2 (nil)
@@ -187,6 +191,7 @@ class Face:
             self.flav = 5
         self.plane = (self.v1, self.v2, self.v3, self.v4)
         self.plane_pointers = None
+        self.plane_points = None
 
     def output_text(self):
         if self.type == 5:
@@ -197,6 +202,8 @@ class Face:
         if self.plane_pointers:
             ptr1, ptr2, ptr3 = self.plane_pointers
             cmd += '(_{}, _{}, _{}), _{}'.format(ptr1, ptr2, ptr3, self.flavor1)
+        elif self.plane_points:
+            cmd += '({}), _{}'.format(format_plane_points(self.plane_points), self.flavor1)
         else:
             cmd += '({}, {}, {}, {}, {}), _{}'.format(
                 self.v1, self.v2, self.v3, self.v5, self.v6, self.flavor1)
@@ -224,11 +231,14 @@ class BSP:
              self.p4 = get_int32(body,cur_pos+36)
         self.flav = type
         self.plane_pointers = None
+        self.plane_points = None
 
     def output_text(self):
         if self.plane_pointers:
             ptr1, ptr2, ptr3 = self.plane_pointers
             plane_cmd = '(_{}, _{}, _{}),'.format(ptr1, ptr2, ptr3)
+        elif self.plane_points:
+            plane_cmd = '({}),'.format(format_plane_points(self.plane_points))
         else:
             plane_cmd = '({}, {}, {}, {}, {}),'.format(self.v1, self.v2, self.v3, self.v5, self.v6)
 

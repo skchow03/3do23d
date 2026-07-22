@@ -311,7 +311,6 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     success = 0
     generated_planes = 0
     failed_generated_planes = 0
-    next_generated_pointer = max(body_dict.keys(), default=0) + 4
     for i in list(body_dict):
 
         if 5 <= body_dict[i].flav <= 10:
@@ -349,19 +348,11 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
             if not success_flag and generate_missing_planes:
                 points = get_points_on_plane(v1, v2, v3, v4)
                 if points:
-                    plane_pointers = []
-                    for point in points:
-                        while next_generated_pointer in body_dict:
-                            next_generated_pointer += 4
-                        body_dict[next_generated_pointer] = Vertex(0, point[0], point[1], point[2], 0, 0)
-                        vertex_set.add(point)
-                        plane_pointers.append(next_generated_pointer)
-                        next_generated_pointer += 4
-                    body_dict[i].plane_pointers = tuple(plane_pointers)
+                    body_dict[i].plane_points = tuple(points)
                     success += 1
                     generated_planes += 1
                     success_flag = True
-                    print ('Generated plane vertices for offset {} from ({},{},{},{})'.format(i, v1,v2,v3,v4))
+                    print ('Generated inline plane vertices for offset {} from ({},{},{},{})'.format(i, v1,v2,v3,v4))
                 else:
                     failed_generated_planes += 1
                     print ('Could not generate plane vertices for offset {} from ({},{},{},{})'.format(i, v1,v2,v3,v4))
