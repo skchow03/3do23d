@@ -18,7 +18,7 @@ def print_list(list):
     new_list = [x.decode('ascii').rstrip('\x00') for x in list]
     print (new_list)
 
-def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False, generate_missing_planes=False, progress_callback: Callable[[str], None] | None = None, detailed_progress=False):
+def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=False, combine_data_with_list=False, generate_missing_planes=False, progress_callback: Callable[[str], None] | None = None, detailed_progress=False, extract_dynamic=False):
 
     start_time = time.monotonic()
     _emit_progress(progress_callback, 'Preparing conversion', detailed_progress=detailed_progress)
@@ -30,6 +30,7 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     print ('Output .3d file: {}'.format(output_file))
     print ('Plane matching tolerance: {}%'.format(tolerance*100))
     print ('Generate missing planes: {}'.format(generate_missing_planes))
+    print ('Extract DYNAMIC lines only: {}'.format(extract_dynamic))
 
     body_dict = {}
 
@@ -458,12 +459,20 @@ def convert_3do23d(filename, output_file=None, tolerance=0.02, sort_vertices=Fal
     print ('PMP files: ',end='')
     print_list(pmp_file_list)
 
+    if extract_dynamic:
+        sorted_pointers = [i for i in sorted_pointers if body_dict[i].flav == 15]
+
     _emit_progress(progress_callback, f'Writing output to {output_file}', detailed_progress=detailed_progress)
     with open(output_file, 'w') as o:
         print ('Writing to {}...'.format(output_file), end='')
         o.write('3D VERSION 3.0;\n')
+        dynamic_index = 0
         for i in sorted_pointers:
-            o.write('_{}: '.format(i))
+            if extract_dynamic:
+                o.write('__TSO{}: '.format(dynamic_index))
+                dynamic_index += 1
+            else:
+                o.write('_{}: '.format(i))
             o.write(body_dict[i].output_text() + ';\n')
 
     print ('done')

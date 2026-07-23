@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--combine_data_with_list", action="store_true", help="For tracks, combine DATA with LIST if enabled.")
     parser.add_argument("--generate_missing_planes", action="store_true", help="Generate plane vertices from BSP/FACE values when no existing vertices match.")
     parser.add_argument("--detailed_progress", action="store_true", help="Show detailed real-time progress updates during conversion.")
+    parser.add_argument("--extract_dynamic", action="store_true", help="Write only DYNAMIC lines and rename their labels to __TSO0, __TSO1, etc.")
 
     args = parser.parse_args()
 
@@ -31,7 +32,8 @@ def main():
             sort_vertices=args.sort_vertices,
             combine_data_with_list=args.combine_data_with_list,
             generate_missing_planes=args.generate_missing_planes,
-            detailed_progress=args.detailed_progress
+            detailed_progress=args.detailed_progress,
+            extract_dynamic=args.extract_dynamic
         )
     except Exception as exc:  # noqa: BLE001 - expose detailed conversion failures to CLI users.
         print(f"Conversion failed while converting {args.input_file}: {exc}")
