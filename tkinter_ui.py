@@ -90,6 +90,7 @@ class ConverterApp(tk.Tk):
         self.combine_data_with_list = tk.BooleanVar(value=False)
         self.generate_missing_planes = tk.BooleanVar(value=False)
         self.detailed_progress = tk.BooleanVar(value=False)
+        self.extract_dynamic = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Ready")
         self.current_step = tk.StringVar(value="Idle")
         self._last_default_output_file = ""
@@ -158,6 +159,7 @@ class ConverterApp(tk.Tk):
         ttk.Checkbutton(options, text="Combine DATA statements into LIST statements", variable=self.combine_data_with_list).grid(row=1, column=0, sticky="w")
         ttk.Checkbutton(options, text="Generate inline vertices for missing BSP/FACE planes", variable=self.generate_missing_planes).grid(row=2, column=0, sticky="w")
         ttk.Checkbutton(options, text="Show detailed real-time progress in the log", variable=self.detailed_progress).grid(row=3, column=0, sticky="w")
+        ttk.Checkbutton(options, text="Extract only DYNAMIC lines and rename labels to __TSOx", variable=self.extract_dynamic).grid(row=4, column=0, sticky="w")
 
         actions = ttk.Frame(main)
         actions.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 6))
@@ -292,6 +294,7 @@ class ConverterApp(tk.Tk):
             "combine_data_with_list": self.combine_data_with_list.get(),
             "generate_missing_planes": self.generate_missing_planes.get(),
             "detailed_progress": self.detailed_progress.get(),
+            "extract_dynamic": self.extract_dynamic.get(),
         }
 
     def _convert(
@@ -313,6 +316,7 @@ class ConverterApp(tk.Tk):
                     generate_missing_planes=options["generate_missing_planes"],
                     progress_callback=self._queue_progress,
                     detailed_progress=options["detailed_progress"],
+                    extract_dynamic=options["extract_dynamic"],
                 )
         except Exception as exc:  # noqa: BLE001 - surface converter errors in the UI.
             self.output_queue.put(f"\nConversion failed while converting {input_file}: {exc}\n")
@@ -348,6 +352,7 @@ class ConverterApp(tk.Tk):
                             generate_missing_planes=options["generate_missing_planes"],
                             progress_callback=self._queue_progress,
                             detailed_progress=options["detailed_progress"],
+                            extract_dynamic=options["extract_dynamic"],
                         )
                 except Exception as exc:  # noqa: BLE001 - keep batch conversion running.
                     print(f"Conversion failed for {input_file}: {exc}")
